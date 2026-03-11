@@ -1,6 +1,6 @@
 ---
 title: 'Group Project: Early Alert with LMS Data'
-author: '[[ADD YOUR NAME, CORNELL ID]]'
+author: '[[Ashley Kim, CORNELL ID]]'
 subtitle: INFO 4100/5101 Learning Analytics
 output:
   pdf_document: default

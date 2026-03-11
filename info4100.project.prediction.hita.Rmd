@@ -1,0 +1,307 @@
+---
+title: 'Group Project: Early Alert with LMS Data'
+author: '[[ADD YOUR NAME, CORNELL ID]]'
+subtitle: INFO 4100/5101 Learning Analytics
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+library(tidyverse)
+# This loads 2 datasets: a=activities, con=conversations
+a = read.csv("activity_data.csv")
+con = read.csv("conversation_data.csv")
+```
+
+# Introduction
+
+**Goals:** The goal of this project is to learn how to work with raw Learning Management System (LMS) data and apply the prediction methods you have learned so far to a realistic educational problem.
+You will develop an early warning system that predicts whether a student will miss the deadline for an elaboration activity.
+
+I am sharing a de-identified export of our class’s HITA data, including chatbot conversation logs and activity progress/outcome records.
+I performed only minimal cleaning, leaving much of the real-world messiness for you to handle.
+As always, you should begin by getting to know the data.
+In this case, you should be able to understand the data especially well because it is based on your own course activity.
+
+Your task is to construct a prediction dataset with one row per **student × activity** and to predict whether that student will **fail to complete the activity before the deadline**.
+To make this a realistic early warning problem, your model may use only information available **up to 24 hours before the due date** for that activity.
+Any information generated after that cutoff is not allowed in feature construction.
+
+You are encouraged to use both the activity data and the chatbot conversation data.
+A central challenge of the project is deciding how to link these datasets, define the prediction target, engineer useful features, and evaluate your model appropriately.
+
+**Group Project:** This is a group project and I expect you to work as a team to come up with the best possible prediction accuracy.
+Your team will submit one common solution.
+
+**Grading and Rubric:** This group project counts toward your final grade as specified in the syllabus.
+Grading will be based on the following rubric, with 0, 1, or 2 points in each category: 0 if the component is missing or incorrect, 1 if it is partially correct, and 2 if it is correct and clearly executed.
+
+-   **Understanding the Data:** Does the submission demonstrate a clear understanding of the datasets, key variables, and how the datasets were linked?
+
+-   **Preparing the Data:** Does the submission appropriately prepare the dataset for analysis, including valid outcomes, features, and timing considerations?
+    In particular, does the submission correctly define the unit of analysis, the prediction target, and the 24-hour cutoff for prediction?
+
+-   **Splitting the Data:** Does the submission use a justified training/test split that avoids leakage?
+
+-   **Training Prediction Models:** Does the submission train at least two models, including a baseline, and explain the modeling approach?
+
+-   **Testing Prediction Models:** Does the submission evaluate the trained models on a hold-out test set and report appropriate metrics?
+
+-   **Summarizing Results:** Does the submission provide a coherent and informative summary of the feasibility, performance, and limitations of the early warning system?
+
+**Try Your Best:** All members of the **two teams** with the highest valid **test-set F1 scores** will receive one extra credit point, and their solutions may be featured.
+To be eligible, the prediction setup must be methodologically correct.
+In particular, your solution must use the correct prediction target, respect the 24-hour cutoff, and avoid leakage between training and test data.
+
+# Step 1: Understand the data
+
+There are two datasets which can be connected using the poster_id column (a hashed version of the user email) and in some cases the activity_step_id column (an id to connect conversations to activities):
+
+1.  Conversation data (1 row per student per message): this includes all messages sent in the general chat and in the activities, with information about the message time (*created_at*), message content (*message_text*), and whether it was sent by the AI vs. student (*system*: TRUE=AI, FALSE=student); conversations that occur within an Activity (e.g., reading elaboration activities in this course) have an *activity_step_id*, otherwise this shows an NA value; you can trace what system message were sent in response to a student message using the *reply_to_id* columns.
+
+2.  Activities data (1 row per activity per student): this includes activity metadata (e.g., *name*, available_at, *due_at*), and binary started and completed indicator for all activities and students who at least started them.
+
+You can convert any date-time column `X` into a numeric `timestamp` which may be helpful (but optional): `as.numeric(as.POSIXct(X, tz = "UTC"))`.
+Just note that the timezone is UTC not EST.
+
+*Question 1:* In the space below, explore each dataset using `head()`, `n_distinct(data$some_id)`, `summary()`, `table(data$column)`.
+You can also plot the distribution of variables with histograms or boxplots.
+
+```{r}
+############################################### 
+###### BEGIN INPUT: Explore each dataset ###### 
+###############################################
+
+# Exploring Conversations data
+# add code here
+
+# Exploring Activities data
+# add code here
+
+# Exploring connections between datasets
+# add code here
+
+###############################################
+###############################################
+```
+
+# Step 2: Define a prediction task
+
+Recall the guidelines for defining a good prediction problem covered in the Handbook chapter on prediction.
+You are looking for something actionable (an opportunity to intervene) and a situation that repeats (so the prediction can be useful in the future).
+The trade-off with the dataset you have here is that on the one hand it is very relevant to you but on the other hand it is relatively small.
+Still, the data is fine-grained and sufficiently messy to give you a taste of LMS data analysis.
+
+The prediction problem for this project is to build a one-day early warning system for missing an elaboration activity submission.
+Specifically, **your goal is to predict one day before the submission deadline, if a student will forget to complete the elaboration activity**, so that the system can send a reminder.
+As you may have noticed during the data exploration phase above (if not, you should go back and examine this), there are several elaboration activities and some students who started but did not complete theirs.
+
+We define an **incomplete submission** as having a FALSE for `completed` or no activity record at all (meaning the student did not even start the activity).
+
+### Instructions
+
+**Important note about the setup:** The final prediction target (i.e. the test case) will be "*Week 7 Reading Elaboration: What's Wrong*".
+You should train your model to predict for preceding elaboration activities including "*Week 3 Reading Elaboration: Let's Debate!***"**, and "*Week 6 Reading Elaboration: Multimedia Learning***"**.
+Please note that *Week 2 Reading Elaboration: Mining Big Data in Education* should be **excluded** because platform configuration was still in progress during that week and no due date was recorded in the system.
+In addition, since it was the first reading elaboration activity, students’ task completion patterns may differ from those in later activities.
+*Week 8–9 Group Project Help: Early Alert* should also be **excluded**, as these records were generated before the activity was revised and officially released.
+
+1.  Treat each elaboration activity assignment as a prediction task (thus there are x\*n prediction opportunities where x = number of elaboration activities and n = number of students who have had at least one conversation)
+2.  Create a dataset that has 1 row per student per elaboration activity with the binary outcome (did they MISS it? yes/no) and several predictors (see next tip)
+3.  Predictors (i.e. features) need to be engineered with data from **24hrs before each assignment is due**, which of course varies across assignments; that means you have much more information to predict later assignments than earlier ones.
+4.  Once your dataset is ready, split it into a training and a test set
+5.  Train a prediction model on the training data; you can try out any of the ones we have covered in the prediction homework and Random Forest
+6.  Keep tuning your model choice, model parameters (if any), and feature engineering
+7.  Finally, test your prediction accuracy on the test set
+
+# Step 3: Getting you started
+
+## Create the outcome variable
+
+**Identify the target activities and whether a student did NOT complete it**.
+Recall that we want to have a *warning* system, so the outcome should be the negative action (i.e. missing it).
+
+Get the missing outcome for each elaboration activity, associate the deadline for each one, and then compute the timestamp for 24hrs prior to its deadline.
+
+Now you know which elaboration activities to target.
+**Be sure to kick out the ones for Week 2 and Week 8**.
+
+*Question 2:* Now build a dataset with an indicator for each person and each elaboration activity with 1=incomplete/not started, 0=complete.
+Keep track of the deadline: you only want to use features based on data up to 24hrs before it (i.e. `24 * 60 * 60` seconds).
+Be sure to use all students in the `con` dataset as the basis, not just those who are in the `a` dataset because some students in the course may not have started any activity.
+
+```{r}
+############################################### 
+####### BEGIN INPUT: Define outcome ###########
+###############################################
+
+# add code here
+
+############################################### 
+############################################### 
+```
+
+## Feature Engineering
+
+**For each elaboration activity, identify what data is appropriate for feature engineering**
+
+Before you start feature engineering, you need to constrain the data for **each** activity.
+
+Remember that the dataset we are aiming for has 1 row per student and activity with several feature variables and one outcome variable.
+You created the outcome above.
+Now you need to create the appropriate features to join.
+I'm giving you an example for a specific deadline and create two basic features from the conversation.
+You should try to create a lot more features, including complex ones, that can use the conversation and activity data (but remember the timing constraint).
+
+```{r}
+secs_in_day = 60 * 60 * 24
+example_deadline = as.numeric(as.POSIXct("2025-03-01 05:00:00", tz = "UTC"))
+
+example_features = con %>% 
+    filter(as.numeric(as.POSIXct(created_at, tz = "UTC")) < example_deadline - secs_in_day) %>%
+    mutate(
+      msg_len = nchar(message_text)
+    ) %>% 
+    group_by(student_id) %>%
+    summarise(
+        num_chat_conversations = n_distinct(conversation_id[is.na(activity_step_id)]),
+        avg_student_msg_len = mean(msg_len[system==FALSE])
+    )
+
+head(example_features)
+```
+
+*Question 3:* Engineer features for each student and elaboration activity, subject to the timing constraint.
+
+```{r}
+############################################### 
+###### BEGIN INPUT: Engineer features #########
+###############################################
+
+# add code here
+
+###############################################
+###############################################
+```
+
+# Step 4: Split your dataset
+
+*Question 4:* We would like to train the model on earlier assessments in order to make early alert predictions for later ones.
+As the hold-out test set, designate the most recently due elaboration activity (i.e. the one for Week 7).
+You will use all the remaining data to train.
+Note that this may not be the best setup for all applications (e.g. if we wanted to use the model at the start of the course next year, but it is a reasonable approach if we wanted to use the model for the rest of this course offering).
+Identify the activity_id of the Week 7 activity and store data associated with that period in the `test` dataset.
+Take all the remaining data (earlier periods for prior weeks) and store them in the `train` dataset.
+
+```{r}
+############################################### 
+######## BEGIN INPUT: Split dataset ###########
+###############################################
+
+# Identify last due elaboration activity for testing
+# add code here
+
+# Split the dataset into train and test based on the activity_ids or periods
+# test = 
+# train = 
+
+###############################################
+###############################################
+```
+
+# Step 5: Train your models
+
+*Question 5:* Train at least two prediction models, including one reasonable baseline.
+A useful baseline might rely on a small set of behavioral features such as number of messages, recency of activity, or whether the student had started the activity by the cutoff.
+Stronger solutions may explore richer feature engineering, including text-derived features from the chatbot interactions, but methodological correctness matters more than model complexity.
+You are also encouraged to try out different algorithms that you have learned so far.
+You can go back and check your features and refine them to get better performance.
+To check how well you are doing, you should focus on your training data and compute the F1 score for each model you build: `F1 = 2/[(1/recall)+(1/precision)]`.
+Report your F1 scores on the training data below (don't forget this!).
+
+```{r}
+############################################### 
+####### BEGIN INPUT: Train and report #########
+###############################################
+
+# Fit  model to training data
+# add code here
+
+# Get predictions
+# add code here
+
+# Compute accuracy, recall, precision, and F1
+# add code here
+F1 = 2 / (1/recall + 1/precision)
+  
+# Training F1 score is ...
+F1
+
+###############################################
+###############################################
+```
+
+# Step 6: Test your model
+
+*Question 6:* Using the model that you arrived at, predict on the held-out test data, and report the model performance using F1 score and at least two additional metrics.
+Typically, you would only do this once at the very end, but for this project it is actually rather hard to do well on the test set, so you can try your model (sparingly to avoid overfitting too much) on the test data to compute the performance metrics.
+
+```{r}
+############################################### 
+####### BEGIN INPUT: Test and report ##########
+###############################################
+
+# Make predictions on the test dataset
+# add code here
+
+# Compute F1 and at least two additional metrics
+# add code here
+F1 = 2 / (1/recall + 1/precision)
+#additional metics...
+
+# Testing F1 score is ...
+F1
+#additional metics...
+
+###############################################
+###############################################
+```
+
+# Step 7: Report
+
+*Question 7:* As a team, write a brief report.
+Imagine your supervisor asked you to investigate the possibility of an early warning system.
+She would like to know what model to use, what features are important, and most importantly how well it would work.
+Given what you've learned, would you recommend implementing the system?
+Write your report answering the above questions here:
+
+%######## BEGIN INPUT: Summarize findings \############
+
+Add your summary here.
+
+%###############################################
+
+# Estimate time spent
+
+**We want to give students an estimate of how much time this project will take. Please indicate how many hours you spent as a team to complete this project here.**
+
+-   I spent [insert your time] hours.
+
+# Generative AI usage
+
+**As stated in the course syllabus, using generative AI is allowed to help you as you complete this project. We are interested in how it is being used and whether it is helpful for you.**
+
+-   How much did you use generative AI (e.g., not at all, some, most, or all the questions) and which one did you use?
+-   If you used generative AI, how did you use it and was it helpful?
+
+# Submit Project
+
+This is the end of the project.
+Please **Knit a Word doc report** that shows both the R code and R output (be sure to check the Word doc) and upload it on Canvas.
+One upload for the team before the deadline is sufficient.

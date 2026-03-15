@@ -141,7 +141,44 @@ Be sure to use all students in the `con` dataset as the basis, not just those wh
 ####### BEGIN INPUT: Define outcome ###########
 ###############################################
 
-# add code here
+con <- con %>%
+  mutate(created_at = ymd_hms(created_at, tz = "UTC"))
+
+all_students <- con %>%
+  distinct(poster_id)
+
+target_activities <- a %>%
+  filter(name %in% c(
+    "Week 3 Reading Elaboration: Let's Debate!",
+    "Week 6 Reading Elaboration: Multimedia Learning",
+    "Week 7 Reading Elaboration: What's Wrong?"
+  )) %>%
+  distinct(activity_step_id, name, due_at) %>%
+  mutate(
+    due_at = ymd_hms(due_at, tz = "UTC"),
+    cutoff_24hr = due_at - hours(24)
+  )
+
+student_activity_grid <- all_students %>%
+  cross_join(target_activities)
+
+activity_completion <- a %>%
+  filter(activity_step_id %in% target_activities$activity_step_id) %>%
+  select(poster_id, activity_step_id, started, completed) %>%
+  group_by(poster_id, activity_step_id) %>%
+  summarise(
+    started   = any(started   == "true", na.rm = TRUE),
+    completed = any(completed == "true", na.rm = TRUE),
+    .groups = "drop"
+  )
+
+dataset <- student_activity_grid %>%
+  left_join(activity_completion, by = c("poster_id", "activity_step_id")) %>%
+  mutate(
+    started   = replace_na(started,   FALSE),
+    completed = replace_na(completed, FALSE),
+    outcome = if_else(completed, 0L, 1L)
+  )
 
 ############################################### 
 ############################################### 
@@ -184,7 +221,59 @@ head(example_features)
 ###### BEGIN INPUT: Engineer features #########
 ###############################################
 
-# add code here
+deadlines <- target_activities %>%
+  select(activity_step_id, name, due_at) %>%
+  mutate(due_at_numeric = as.numeric(as.POSIXct(due_at, tz = "UTC")))
+
+
+engineer_features <- function(activity_step, deadline_numeric) {
+
+  students_for_activity <- dataset %>%
+    filter(activity_step_id == activity_step) %>%
+    select(poster_id, activity_step_id, outcome)
+
+
+  con_filtered <- con %>%
+    filter(
+      as.numeric(as.POSIXct(created_at, tz = "UTC")) < deadline_numeric - secs_in_day
+    ) %>%
+    mutate(msg_len = nchar(message_text))
+
+
+  features <- con_filtered %>%
+    group_by(poster_id) %>%
+    summarise(
+      total_messages         = n(),
+      num_activity_convos    = n_distinct(conversation_id[!is.na(activity_step_id)]),
+      num_unique_convos      = n_distinct(conversation_id),
+      num_days_active        = n_distinct(as.Date(created_at)),
+      avg_student_msg_len = mean(msg_len[system == "false"], na.rm = TRUE),
+      num_system_messages = sum(system == "true",  na.rm = TRUE),
+      num_student_messages = sum(system == "false", na.rm = TRUE),
+      avg_system_msg_len  = mean(msg_len[system == "true"],  na.rm = TRUE),
+      max_student_msg_len = ifelse(
+        any(system == "false"),
+        max(msg_len[system == "false"], na.rm = TRUE),
+        NA_real_),
+      .groups = "drop"
+    )
+
+  students_for_activity %>%
+    left_join(features, by = "poster_id") %>%
+    mutate(across(
+      c(total_messages, num_system_messages,
+        num_student_messages, num_activity_convos, num_unique_convos,
+        num_days_active),
+      ~ replace_na(., 0)
+    ))
+}
+
+final_dataset <- map2(
+  deadlines$activity_step_id,
+  deadlines$due_at_numeric,
+  engineer_features
+) %>%
+  bind_rows()
 
 ###############################################
 ###############################################

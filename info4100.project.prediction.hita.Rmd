@@ -3,8 +3,8 @@ title: 'Group Project: Early Alert with LMS Data'
 author: '[[Ashley Kim, CORNELL ID]]'
 subtitle: INFO 4100/5101 Learning Analytics
 output:
-  pdf_document: default
   word_document: default
+  pdf_document: default
   html_document:
     df_print: paged
 editor_options: 
@@ -141,6 +141,9 @@ Be sure to use all students in the `con` dataset as the basis, not just those wh
 ####### BEGIN INPUT: Define outcome ###########
 ###############################################
 
+library(lubridate)
+library(tidyverse)
+
 con <- con %>%
   mutate(created_at = ymd_hms(created_at, tz = "UTC"))
 
@@ -160,24 +163,24 @@ target_activities <- a %>%
   )
 
 student_activity_grid <- all_students %>%
-  cross_join(target_activities)
+  crossing(target_activities)
 
 activity_completion <- a %>%
   filter(activity_step_id %in% target_activities$activity_step_id) %>%
   select(poster_id, activity_step_id, started, completed) %>%
   group_by(poster_id, activity_step_id) %>%
   summarise(
-    started   = any(started   == "true", na.rm = TRUE),
-    completed = any(completed == "true", na.rm = TRUE),
+    started = any(started == TRUE, na.rm = TRUE),
+    completed = any(completed == TRUE, na.rm = TRUE),
     .groups = "drop"
   )
 
 dataset <- student_activity_grid %>%
   left_join(activity_completion, by = c("poster_id", "activity_step_id")) %>%
   mutate(
-    started   = replace_na(started,   FALSE),
+    started = replace_na(started, FALSE),
     completed = replace_na(completed, FALSE),
-    outcome = if_else(completed, 0L, 1L)
+    outcome = if_else(completed == TRUE, 0L, 1L)
   )
 
 ############################################### 
@@ -197,19 +200,19 @@ I'm giving you an example for a specific deadline and create two basic features 
 You should try to create a lot more features, including complex ones, that can use the conversation and activity data (but remember the timing constraint).
 
 ```{r}
-secs_in_day = 60 * 60 * 24
-example_deadline = as.numeric(as.POSIXct("2025-03-01 05:00:00", tz = "UTC"))
+secs_in_day <- 60 * 60 * 24
+example_deadline <- as.numeric(as.POSIXct("2025-03-01 05:00:00", tz = "UTC"))
 
-example_features = con %>% 
-    filter(as.numeric(as.POSIXct(created_at, tz = "UTC")) < example_deadline - secs_in_day) %>%
-    mutate(
-      msg_len = nchar(message_text)
-    ) %>% 
-    group_by(student_id) %>%
-    summarise(
-        num_chat_conversations = n_distinct(conversation_id[is.na(activity_step_id)]),
-        avg_student_msg_len = mean(msg_len[system==FALSE])
-    )
+example_features <- con %>% 
+  filter(as.numeric(as.POSIXct(created_at, tz = "UTC")) < example_deadline - secs_in_day) %>%
+  mutate(
+    msg_len = nchar(message_text)
+  ) %>% 
+  group_by(poster_id) %>%
+  summarise(
+    num_chat_conversations = n_distinct(conversation_id[is.na(activity_step_id)]),
+    avg_student_msg_len = mean(msg_len[system == FALSE], na.rm = TRUE)
+  )
 
 head(example_features)
 ```
@@ -221,62 +224,145 @@ head(example_features)
 ###### BEGIN INPUT: Engineer features #########
 ###############################################
 
+library(purrr)
+
+secs_in_day <- 60 * 60 * 24
+
+con <- con %>%
+  mutate(
+    created_at = ymd_hms(created_at, tz = "UTC"),
+    created_num = as.numeric(created_at),
+    msg_len = nchar(message_text)
+  )
+
 deadlines <- target_activities %>%
-  select(activity_step_id, name, due_at) %>%
-  mutate(due_at_numeric = as.numeric(as.POSIXct(due_at, tz = "UTC")))
+  select(activity_step_id, name, due_at, cutoff_24hr) %>%
+  mutate(
+    due_at_numeric = as.numeric(due_at),
+    cutoff_numeric = as.numeric(cutoff_24hr)
+  )
 
-
-engineer_features <- function(activity_step, deadline_numeric) {
-
+engineer_features <- function(activity_step, deadline_numeric, cutoff_numeric) {
+  
   students_for_activity <- dataset %>%
     filter(activity_step_id == activity_step) %>%
-    select(poster_id, activity_step_id, outcome)
-
-
+    select(poster_id, activity_step_id, name, due_at, cutoff_24hr, outcome)
+  
   con_filtered <- con %>%
-    filter(
-      as.numeric(as.POSIXct(created_at, tz = "UTC")) < deadline_numeric - secs_in_day
-    ) %>%
-    mutate(msg_len = nchar(message_text))
-
-
+    filter(created_num < cutoff_numeric)
+  
   features <- con_filtered %>%
     group_by(poster_id) %>%
     summarise(
-      total_messages         = n(),
-      num_activity_convos    = n_distinct(conversation_id[!is.na(activity_step_id)]),
-      num_unique_convos      = n_distinct(conversation_id),
-      num_days_active        = n_distinct(as.Date(created_at)),
-      avg_student_msg_len = mean(msg_len[system == "false"], na.rm = TRUE),
-      num_system_messages = sum(system == "true",  na.rm = TRUE),
-      num_student_messages = sum(system == "false", na.rm = TRUE),
-      avg_system_msg_len  = mean(msg_len[system == "true"],  na.rm = TRUE),
+      total_messages = n(),
+      num_student_messages = sum(system == FALSE, na.rm = TRUE),
+      num_system_messages = sum(system == TRUE, na.rm = TRUE),
+      num_unique_convos = n_distinct(conversation_id),
+      num_chat_conversations = n_distinct(conversation_id[is.na(activity_step_id)]),
+      num_activity_convos = n_distinct(conversation_id[!is.na(activity_step_id)]),
+      num_unique_activity_steps = n_distinct(activity_step_id[!is.na(activity_step_id)]),
+      num_days_active = n_distinct(as.Date(created_at)),
+      avg_student_msg_len = mean(msg_len[system == FALSE], na.rm = TRUE),
+      avg_system_msg_len = mean(msg_len[system == TRUE], na.rm = TRUE),
       max_student_msg_len = ifelse(
-        any(system == "false"),
-        max(msg_len[system == "false"], na.rm = TRUE),
-        NA_real_),
+        any(system == FALSE, na.rm = TRUE),
+        max(msg_len[system == FALSE], na.rm = TRUE),
+        NA_real_
+      ),
+      messages_last_day = sum(
+        created_num >= (cutoff_numeric - secs_in_day) &
+        created_num < cutoff_numeric,
+        na.rm = TRUE
+      ),
+      messages_last_3days = sum(
+        created_num >= (cutoff_numeric - 3 * secs_in_day) &
+        created_num < cutoff_numeric,
+        na.rm = TRUE
+      ),
+      days_since_last_message = ifelse(
+        n() > 0,
+        (cutoff_numeric - max(created_num, na.rm = TRUE)) / secs_in_day,
+        NA_real_
+      ),
+      activity_messages_specific = sum(activity_step_id == activity_step, na.rm = TRUE),
+      activity_student_messages_specific = sum(
+        activity_step_id == activity_step & system == FALSE,
+        na.rm = TRUE
+      ),
+      activity_system_messages_specific = sum(
+        activity_step_id == activity_step & system == TRUE,
+        na.rm = TRUE
+      ),
+      replied_message_count = sum(!is.na(reply_to), na.rm = TRUE),
       .groups = "drop"
+    ) %>%
+    mutate(
+      student_message_ratio = ifelse(
+        total_messages > 0,
+        num_student_messages / total_messages,
+        0
+      ),
+      avg_messages_per_day = ifelse(
+        num_days_active > 0,
+        total_messages / num_days_active,
+        0
+      )
     )
-
+  
   students_for_activity %>%
     left_join(features, by = "poster_id") %>%
-    mutate(across(
-      c(total_messages, num_system_messages,
-        num_student_messages, num_activity_convos, num_unique_convos,
-        num_days_active),
-      ~ replace_na(., 0)
-    ))
+    mutate(
+      across(
+        c(
+          total_messages,
+          num_student_messages,
+          num_system_messages,
+          num_unique_convos,
+          num_chat_conversations,
+          num_activity_convos,
+          num_unique_activity_steps,
+          num_days_active,
+          messages_last_day,
+          messages_last_3days,
+          activity_messages_specific,
+          activity_student_messages_specific,
+          activity_system_messages_specific,
+          replied_message_count,
+          student_message_ratio,
+          avg_messages_per_day
+        ),
+        ~ replace_na(., 0)
+      ),
+      across(
+        c(
+          avg_student_msg_len,
+          avg_system_msg_len,
+          max_student_msg_len,
+          days_since_last_message
+        ),
+        ~ replace_na(., 0)
+      )
+    )
 }
 
-final_dataset <- map2(
-  deadlines$activity_step_id,
-  deadlines$due_at_numeric,
+final_dataset <- pmap_dfr(
+  list(
+    deadlines$activity_step_id,
+    deadlines$due_at_numeric,
+    deadlines$cutoff_numeric
+  ),
   engineer_features
-) %>%
-  bind_rows()
+)
 
 ###############################################
 ###############################################
+```
+```{r}
+dim(final_dataset)
+head(final_dataset)
+glimpse(final_dataset)
+summary(final_dataset$outcome)
+table(final_dataset$outcome)
 ```
 
 # Step 4: Split your dataset

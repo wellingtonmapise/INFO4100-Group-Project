@@ -150,37 +150,45 @@ con <- con %>%
 all_students <- con %>%
   distinct(poster_id)
 
+
 target_activities <- a %>%
   filter(name %in% c(
     "Week 3 Reading Elaboration: Let's Debate!",
     "Week 6 Reading Elaboration: Multimedia Learning",
     "Week 7 Reading Elaboration: What's Wrong?"
   )) %>%
+  group_by(name) %>%
+  slice(1) %>%  
+  ungroup() %>%
   distinct(activity_step_id, name, due_at) %>%
   mutate(
     due_at = ymd_hms(due_at, tz = "UTC"),
     cutoff_24hr = due_at - hours(24)
   )
 
+
 student_activity_grid <- all_students %>%
   crossing(target_activities)
 
+
 activity_completion <- a %>%
-  filter(activity_step_id %in% target_activities$activity_step_id) %>%
-  select(poster_id, activity_step_id, started, completed) %>%
-  group_by(poster_id, activity_step_id) %>%
+  filter(name %in% c(
+    "Week 3 Reading Elaboration: Let's Debate!",
+    "Week 6 Reading Elaboration: Multimedia Learning",
+    "Week 7 Reading Elaboration: What's Wrong?"
+  )) %>%
+  group_by(poster_id, name) %>%
   summarise(
-    started = any(started == TRUE, na.rm = TRUE),
-    completed = any(completed == TRUE, na.rm = TRUE),
+    completed = any(completed == "true", na.rm = TRUE),
     .groups = "drop"
   )
 
+
 dataset <- student_activity_grid %>%
-  left_join(activity_completion, by = c("poster_id", "activity_step_id")) %>%
+  left_join(activity_completion, by = c("poster_id", "name")) %>%
   mutate(
-    started = replace_na(started, FALSE),
     completed = replace_na(completed, FALSE),
-    outcome = if_else(completed == TRUE, 0L, 1L)
+    outcome = if_else(completed, 0L, 1L)
   )
 
 ############################################### 
@@ -426,18 +434,39 @@ Report your F1 scores on the training data below (don't forget this!).
 ####### BEGIN INPUT: Train and report #########
 ###############################################
 
-# Fit  model to training data
-# add code here
+
+library(e1071)
+
+m_nb = naiveBayes(outcome ~ total_messages + num_student_messages + num_system_messages + num_unique_convos + num_chat_conversations + num_activity_convos + num_unique_activity_steps + num_days_active + messages_last_day + messages_last_3days + activity_messages_specific + activity_student_messages_specific + activity_system_messages_specific + replied_message_count + student_message_ratio + avg_messages_per_day + avg_student_msg_len + avg_system_msg_len + max_student_msg_len + days_since_last_message, data = train)
+
+
+m_logreg = glm(outcome ~ total_messages + num_student_messages + num_system_messages + num_unique_convos + num_activity_convos + num_unique_activity_steps + num_days_active + messages_last_day + messages_last_3days + activity_messages_specific + activity_student_messages_specific + activity_system_messages_specific + replied_message_count + student_message_ratio + avg_messages_per_day + avg_student_msg_len + avg_system_msg_len + max_student_msg_len + days_since_last_message, data = train, family = "binomial")
 
 # Get predictions
-# add code here
+
+p_nb = predict(m_nb, newdata = test, type = 'class')
+
+p_logreg = predict(m_logreg, newdata = test, type = 'response')
+
 
 # Compute accuracy, recall, precision, and F1
-# add code here
-F1 = 2 / (1/recall + 1/precision)
+
+
+acc_nb    <- (cm_nb[1,1] + cm_nb[2,2]) / sum(cm_nb)
+recall_nb <- cm_nb[2,2] / (cm_nb[2,2] + cm_nb[2,1])
+prec_nb   <- cm_nb[2,2] / (cm_nb[2,2] + cm_nb[1,2])
+f1_nb = 2 / (1/recall_nb + 1/prec_nb )
   
-# Training F1 score is ...
-F1
+
+cat("Naive Bayes: ")
+cat(" Accuracy: ",  acc_nb)
+cat(" Recall: ",    recall_nb)
+cat(" Precision: ", prec_nb, "\n")
+cat(" F1: ", f1_nb, "\n")
+
+## add log regression stuff here 
+
+
 
 ###############################################
 ###############################################

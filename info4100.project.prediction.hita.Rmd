@@ -255,18 +255,18 @@ engineer_features <- function(activity_step, deadline_numeric, cutoff_numeric) {
     group_by(poster_id) %>%
     summarise(
       total_messages = n(),
-      num_student_messages = sum(system == FALSE, na.rm = TRUE),
-      num_system_messages = sum(system == TRUE, na.rm = TRUE),
+      num_student_messages = sum(system == "false", na.rm = TRUE),
+      num_system_messages = sum(system == "true", na.rm = TRUE),
       num_unique_convos = n_distinct(conversation_id),
       num_chat_conversations = n_distinct(conversation_id[is.na(activity_step_id)]),
       num_activity_convos = n_distinct(conversation_id[!is.na(activity_step_id)]),
       num_unique_activity_steps = n_distinct(activity_step_id[!is.na(activity_step_id)]),
       num_days_active = n_distinct(as.Date(created_at)),
-      avg_student_msg_len = mean(msg_len[system == FALSE], na.rm = TRUE),
-      avg_system_msg_len = mean(msg_len[system == TRUE], na.rm = TRUE),
+      avg_student_msg_len = mean(msg_len[system == "false"], na.rm = TRUE),
+      avg_system_msg_len = mean(msg_len[system == "true"], na.rm = TRUE),
       max_student_msg_len = ifelse(
-        any(system == FALSE, na.rm = TRUE),
-        max(msg_len[system == FALSE], na.rm = TRUE),
+        any(system == "false", na.rm = TRUE),
+        max(msg_len[system == "false"], na.rm = TRUE),
         NA_real_
       ),
       messages_last_day = sum(
@@ -286,11 +286,11 @@ engineer_features <- function(activity_step, deadline_numeric, cutoff_numeric) {
       ),
       activity_messages_specific = sum(activity_step_id == activity_step, na.rm = TRUE),
       activity_student_messages_specific = sum(
-        activity_step_id == activity_step & system == FALSE,
+        activity_step_id == activity_step & system == "false",
         na.rm = TRUE
       ),
       activity_system_messages_specific = sum(
-        activity_step_id == activity_step & system == TRUE,
+        activity_step_id == activity_step & system == "true",
         na.rm = TRUE
       ),
       replied_message_count = sum(!is.na(reply_to), na.rm = TRUE),
@@ -385,6 +385,27 @@ Take all the remaining data (earlier periods for prior weeks) and store them in 
 # Split the dataset into train and test based on the activity_ids or periods
 # test = 
 # train = 
+
+#[TODO] - delete comments before submission
+
+week7_id <- target_activities %>%
+  filter(name == "Week 7 Reading Elaboration: What's Wrong?") %>%
+  pull(activity_step_id)
+
+test <- final_dataset %>%
+  filter(activity_step_id == week7_id)
+
+train <- final_dataset %>%
+  filter(activity_step_id != week7_id)
+
+dim(train)
+dim(test)
+
+table(train$name)
+table(test$name)
+
+table(train$outcome)
+table(test$outcome)
 
 ###############################################
 ###############################################

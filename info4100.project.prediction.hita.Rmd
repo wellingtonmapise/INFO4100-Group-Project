@@ -74,18 +74,119 @@ Just note that the timezone is UTC not EST.
 You can also plot the distribution of variables with histograms or boxplots.
 
 ```{r}
-############################################### 
-###### BEGIN INPUT: Explore each dataset ###### 
+###############################################
+###### BEGIN INPUT: Explore each dataset ######
 ###############################################
 
-# Exploring Conversations data
-# add code here
+# CONVERSATIONS (con)
 
-# Exploring Activities data
-# add code here
+head(con)
+summary(con)
 
-# Exploring connections between datasets
-# add code here
+cat("Number of unique students in conversations:", n_distinct(con$poster_id), "\n")
+cat("Number of unique activity_step_ids in conversations:", n_distinct(con$activity_step_id), "\n")
+# Note: activity_step_id = "null" (string) means the message is in general chat,
+# not tied to a specific activity
+
+cat("\nMessage breakdown by sender (system = 'true' means AI, 'false' means student):\n")
+table(con$system)
+
+cat("\nMessages tied to an activity vs. general chat:\n")
+table(con$activity_step_id == "null")
+# FALSE = message is inside an activity, TRUE = general chat message
+
+# Distribution of student messages per student
+msgs_per_student <- table(con$poster_id[con$system == "false"])
+cat("\nStudent message counts range from", min(msgs_per_student),
+    "to", max(msgs_per_student), "messages per student\n")
+
+hist(as.numeric(msgs_per_student),
+     main = "Distribution of Student Messages per Student",
+     xlab = "Number of messages sent", col = "steelblue", breaks = 20)
+# A right-skewed distribution suggests a small number of students dominate
+# the conversation — relevant for engagement-based features later
+
+# Proportion of messages in activities vs. general chat
+activity_msg_counts <- table(con$activity_step_id == "null")
+barplot(activity_msg_counts,
+        names.arg = c("In an Activity", "General Chat"),
+        main = "Messages: Inside Activity vs. General Chat",
+        col = c("steelblue", "salmon"), ylab = "Count")
+# This tells us how much of the conversation data is linkable to activities
+# via activity_step_id — important for feature engineering in later steps
+
+
+# ACTIVITIES (a)
+
+head(a)
+summary(a)
+
+cat("Number of unique students in activities:", n_distinct(a$poster_id), "\n")
+cat("Number of distinct activity names:", n_distinct(a$name), "\n")
+cat("Number of unique activity_step_ids:", n_distinct(a$activity_step_id), "\n")
+
+cat("\nStarted breakdown:\n")
+table(a$started)
+# All rows should be started = "true" since the data only includes students
+# who at least started an activity (per the assignment description)
+
+cat("\nCompleted breakdown:\n")
+table(a$completed)
+# This is the raw basis for our prediction target:
+# completed = "false" means the student missed the deadline
+
+# Completion rate per activity
+# Convert completed to logical first since it's stored as a character string
+a$completed_logical <- a$completed == "true"
+completion_by_activity <- aggregate(completed_logical ~ name, data = a, FUN = mean)
+
+cat("\nCompletion rate by activity:\n")
+print(completion_by_activity)
+
+par(mar = c(10, 4, 4, 2))
+barplot(completion_by_activity$completed_logical,
+        names.arg = completion_by_activity$name,
+        main = "Completion Rate by Activity",
+        ylab = "Proportion Completed",
+        col = "steelblue", las = 2, cex.names = 0.7)
+# Activities with lower completion rates are where an early warning system
+# would be most valuable
+
+# Distribution of activities per student
+acts_per_student <- table(a$poster_id)
+cat("\nActivities per student range from", min(acts_per_student),
+    "to", max(acts_per_student), "\n")
+
+hist(as.numeric(acts_per_student),
+     main = "Distribution of Activities per Student",
+     xlab = "Number of activities", col = "salmon", breaks = 20)
+# Students with fewer rows may have joined late or dropped — worth noting
+# as a potential issue when defining the unit of analysis
+
+
+# LINKAGE BETWEEN DATASETS
+
+cat("\n=== DATASET LINKAGE ===\n")
+
+n_both     <- sum(unique(con$poster_id) %in% unique(a$poster_id))
+n_act_only <- sum(!unique(a$poster_id)  %in% unique(con$poster_id))
+n_con_only <- sum(!unique(con$poster_id) %in% unique(a$poster_id))
+
+cat("Students appearing in both datasets:", n_both, "\n")
+cat("Students in activities only (no conversation records):", n_act_only, "\n")
+cat("Students in conversations only (no activity records):", n_con_only, "\n")
+# Gaps may indicate students who completed activities without using the chatbot,
+# or general data quality issues
+
+step_ids_con <- unique(con$activity_step_id[con$activity_step_id != "null"])
+step_ids_act <- unique(a$activity_step_id)
+n_matched <- sum(step_ids_con %in% step_ids_act)
+
+cat("\nActivity step IDs in conversations (excluding nulls):", length(step_ids_con), "\n")
+cat("Activity step IDs in activities dataset:", length(step_ids_act), "\n")
+cat("Matching step IDs across both datasets:", n_matched, "\n")
+# A high match rate means we can reliably join conversation messages
+# to specific activities using activity_step_id + poster_id
 
 ###############################################
 ###############################################

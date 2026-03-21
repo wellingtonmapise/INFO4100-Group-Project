@@ -1,6 +1,6 @@
 ---
 title: 'Group Project: Early Alert with LMS Data'
-author: '[[Ashley Kim, CORNELL ID]]'
+author: 'Ashley Kim (alk282), Nancy Lin (nyl8), Melina Kohilakis (mok26), Wellington Mapise (wpm44), Rena Geula (rg789), Danielle Mazlish (dm922)'
 subtitle: INFO 4100/5101 Learning Analytics
 output:
   word_document: default
